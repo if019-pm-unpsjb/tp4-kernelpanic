@@ -25,9 +25,7 @@ int main(int argc, char *argv[])
     }
 
     const char *ip = argv[1];
-
     int server_fd, client_fd[2] = {-1, -1}, new_socket;
-
     char nombres[MAX_CLIENTS][NAME_SIZE] = {"", ""}; // Nombres de los clientes
 
     struct sockaddr_in address;
@@ -100,6 +98,7 @@ int main(int argc, char *argv[])
                 continue;
             }
 
+            
             // Aceptar hasta 2 clientes
             int assigned = 0;
             for (int i = 0; i < MAX_CLIENTS; i++)
@@ -109,6 +108,16 @@ int main(int argc, char *argv[])
                     client_fd[i] = new_socket;
                     printf("Cliente %d conectado\n", i + 1);
                     assigned = 1;
+
+                    int bytes = recv(new_socket, buffer, BUFFER_SIZE - 1, 0);
+                    if (bytes > 0)
+                    {
+                        buffer[bytes] = '\0';
+                        strncpy(nombres[i], buffer, NAME_SIZE - 1);
+                        nombres[i][NAME_SIZE - 1] = '\0'; // asegurar terminación
+                        printf("Cliente %d se llama %s\n", i + 1, nombres[i]);
+                    }
+
                     break;
                 }
             }
@@ -149,7 +158,11 @@ int main(int argc, char *argv[])
                     int other = (i + 1) % 2;
 
                     if (client_fd[other] != -1)
-                        send(client_fd[other], buffer, strlen(buffer), 0);
+                    {
+                        char mensaje_formateado[BUFFER_SIZE + NAME_SIZE + 16];
+                        snprintf(mensaje_formateado, sizeof(mensaje_formateado), "%s: %s", nombres[i], buffer);
+                        send(client_fd[other], mensaje_formateado, strlen(mensaje_formateado), 0);
+                    }
                 }
             }
         }
