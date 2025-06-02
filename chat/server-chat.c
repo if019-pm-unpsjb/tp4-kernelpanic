@@ -1,9 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int socklen_t;
+#define CERRAR_SOCKET(s) closesocket(s)
+#else
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/select.h>
+#define CERRAR_SOCKET(s) close(s)
+#endif
 
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
@@ -31,7 +43,6 @@ int nombre_duplicado(const char *nombre)
     for (int i = 0; i < MAX_CLIENTS; i++)
         if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, nombre) == 0)
             return 1;
-
     return 0;
 }
 
@@ -39,39 +50,42 @@ void enviar_lista_usuarios()
 {
     char lista[BUFFER_SIZE] = "USERS|";
     int primero = 1;
-
     for (int i = 0; i < MAX_CLIENTS; i++)
+    {
         if (clientes[i].fd != -1)
         {
             if (!primero)
                 strncat(lista, "|", sizeof(lista) - strlen(lista) - 1);
-
             strncat(lista, clientes[i].nombre, sizeof(lista) - strlen(lista) - 1);
             primero = 0;
         }
+    }
 
     for (int i = 0; i < MAX_CLIENTS; i++)
+    {
         if (clientes[i].fd != -1)
             send(clientes[i].fd, lista, strlen(lista), 0);
+    }
 }
 
 void enviar_privado(const char *remitente, const char *destino, const char *mensaje)
 {
     char mensaje_formateado[BUFFER_SIZE];
     snprintf(mensaje_formateado, sizeof(mensaje_formateado), "FROM|%s|%s", remitente, mensaje);
-
     for (int i = 0; i < MAX_CLIENTS; i++)
+    {
         if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, destino) == 0)
         {
             send(clientes[i].fd, mensaje_formateado, strlen(mensaje_formateado), 0);
             return;
         }
+    }
 }
 
 void desconectar_cliente(int idx)
 {
     printf("Desconectado: %s\n", clientes[idx].nombre);
-    close(clientes[idx].fd);
+    CERRAR_SOCKET(clientes[idx].fd);
     clientes[idx].fd = -1;
     clientes[idx].nombre[0] = '\0';
     enviar_lista_usuarios();
@@ -84,6 +98,15 @@ int main(int argc, char *argv[])
         printf("Uso: %s [IP] [PUERTO]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
+
+#ifdef _WIN32
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+        printf("Error al iniciar Winsock: %d\n", WSAGetLastError());
+        return 1;
+    }
+#endif
 
     const char *ip = argv[1];
     int puerto = atoi(argv[2]);
@@ -99,7 +122,7 @@ int main(int argc, char *argv[])
     socklen_t cli_len = sizeof(cli_addr);
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(puerto);
-    inet_pton(AF_INET, ip, &server_addr.sin_addr);
+    server_addr.sin_addr.s_addr = inet_addr(ip);
 
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
@@ -125,12 +148,14 @@ int main(int argc, char *argv[])
         int max_fd = server_fd;
 
         for (int i = 0; i < MAX_CLIENTS; i++)
+        {
             if (clientes[i].fd != -1)
             {
                 FD_SET(clientes[i].fd, &readfds);
                 if (clientes[i].fd > max_fd)
                     max_fd = clientes[i].fd;
             }
+        }
 
         if (select(max_fd + 1, &readfds, NULL, NULL, NULL) < 0)
         {
@@ -146,28 +171,29 @@ int main(int argc, char *argv[])
 
             int idx_libre = -1;
             for (int i = 0; i < MAX_CLIENTS; i++)
+            {
                 if (clientes[i].fd == -1)
                 {
                     idx_libre = i;
                     break;
                 }
+            }
 
             if (idx_libre == -1)
             {
                 char *msg = "Servidor lleno\n";
                 send(nuevo_fd, msg, strlen(msg), 0);
-                close(nuevo_fd);
+                CERRAR_SOCKET(nuevo_fd);
                 continue;
             }
 
-            // Recibir nombre
             char nombre[NAME_SIZE] = {0};
             int bytes = recv(nuevo_fd, nombre, NAME_SIZE - 1, 0);
             if (bytes <= 0 || nombre_duplicado(nombre))
             {
                 char *msg = "Nombre inválido o duplicado\n";
                 send(nuevo_fd, msg, strlen(msg), 0);
-                close(nuevo_fd);
+                CERRAR_SOCKET(nuevo_fd);
                 continue;
             }
 
@@ -179,8 +205,8 @@ int main(int argc, char *argv[])
             enviar_lista_usuarios();
         }
 
-        // Mensajes entrantes
         for (int i = 0; i < MAX_CLIENTS; i++)
+        {
             if (clientes[i].fd != -1 && FD_ISSET(clientes[i].fd, &readfds))
             {
                 char buffer[BUFFER_SIZE] = {0};
@@ -192,8 +218,6 @@ int main(int argc, char *argv[])
                 }
 
                 buffer[bytes] = '\0';
-
-                // Parsear TO|destino|mensaje
                 char *cmd = strtok(buffer, "|");
                 if (cmd && strcmp(cmd, "TO") == 0)
                 {
@@ -203,8 +227,14 @@ int main(int argc, char *argv[])
                         enviar_privado(clientes[i].nombre, destino, mensaje);
                 }
             }
+        }
     }
 
-    close(server_fd);
-    exit(EXIT_SUCCESS);
+    CERRAR_SOCKET(server_fd);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+
+    return 0;
 }
