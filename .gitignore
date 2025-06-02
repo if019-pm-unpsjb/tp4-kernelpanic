@@ -73,3 +73,6 @@ chat/bin/*
 .venv/
 .vscode/
 gui/__pycache__/
+gui/dist/
+gui/build/
+gui/*.spec

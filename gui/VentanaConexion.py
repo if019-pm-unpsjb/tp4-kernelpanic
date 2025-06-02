@@ -1,6 +1,6 @@
 import tkinter as tk
 import socket
-from PIL import Image, ImageTk
+from tkinter import PhotoImage
 from ChatCliente import ChatCliente
 
 class VentanaConexion:
@@ -10,13 +10,9 @@ class VentanaConexion:
         self.centrar_ventana(600, 400)
         self.master.resizable(False, False)
         self.master.columnconfigure(0, weight=1)
-        
-        # Icono
-        self.master.iconphoto(True, ImageTk.PhotoImage(file="./gui/img/icon.png"))
-        
-        # Cargar logo
-        self.logo = ImageTk.PhotoImage(Image.open("./gui/img/openchat_logo.png"))
-        tk.Label(master, image=self.logo).grid(row=0, column=0, pady=(10, 0))
+
+        self.master.iconphoto(True, PhotoImage(file="../img/icon.png"))
+        tk.Label(master, image=PhotoImage(file="../img/openchat_logo.png")).grid(row=0, column=0, pady=(10, 0))
 
         # Entradas
         tk.Label(master, text="Nombre:").grid(row=1, column=0, sticky="w", padx=20, pady=(10, 0))
@@ -53,17 +49,17 @@ class VentanaConexion:
             s.connect((ip, int(puerto)))
             s.sendall(nombre.encode())
             self.label_error.config(text="")
-            
+
             posicion = self.master.winfo_geometry()
             self.master.destroy()
-            
+
             ventana_chat = tk.Tk()
             ventana_chat.geometry(posicion)
             ChatCliente(ventana_chat, s, nombre)
             ventana_chat.mainloop()
         except Exception as e:
             self.label_error.config(text=f"No se pudo conectar: {e}")
-    
+
     def centrar_ventana(self, ancho, alto):
         pantalla_ancho = self.master.winfo_screenwidth()
         pantalla_alto = self.master.winfo_screenheight()
