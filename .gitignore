@@ -71,3 +71,5 @@ chat/bin/*
 
 # python
 .venv/
+.vscode/
+gui/__pycache__/

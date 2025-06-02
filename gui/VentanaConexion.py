@@ -1,29 +1,30 @@
-import socket
 import tkinter as tk
+import socket
 from ChatCliente import ChatCliente
 
 class VentanaConexion:
     def __init__(self, master):
         self.master = master
         self.master.title("Conexión al Servidor")
-        self.master.geometry("300x220")
-        
-        tk.Label(master, text="Su nombre:").pack(pady=(10, 0))
+        self.master.geometry("400x400")
+        master.columnconfigure(0, weight=1)
+
+        tk.Label(master, text="Su nombre:").grid(row=0, column=0, sticky="w", padx=20, pady=(10, 0))
         self.entry_nombre = tk.Entry(master)
-        self.entry_nombre.pack()
+        self.entry_nombre.grid(row=1, column=0, sticky="ew", padx=20)
 
-        tk.Label(master, text="Dirección IP:").pack(pady=(20, 0))
+        tk.Label(master, text="Dirección IP:").grid(row=2, column=0, sticky="w", padx=20, pady=(20, 0))
         self.entry_ip = tk.Entry(master)
-        self.entry_ip.pack()
+        self.entry_ip.grid(row=3, column=0, sticky="ew", padx=20)
 
-        tk.Label(master, text="Puerto:").pack(pady=(10, 0))
+        tk.Label(master, text="Puerto:").grid(row=4, column=0, sticky="w", padx=20, pady=(10, 0))
         self.entry_puerto = tk.Entry(master)
-        self.entry_puerto.pack()
+        self.entry_puerto.grid(row=5, column=0, sticky="ew", padx=20)
 
         self.label_error = tk.Label(master, text="", fg="red")
-        self.label_error.pack(pady=(5, 0))
+        self.label_error.grid(row=6, column=0, padx=20, pady=(5, 0))
 
-        tk.Button(master, text="Conectar", command=self.intentar_conexion).pack(pady=20)
+        tk.Button(master, text="Conectar", command=self.intentar_conexion).grid(row=7, column=0, pady=15)
 
     def intentar_conexion(self):
         ip = self.entry_ip.get()

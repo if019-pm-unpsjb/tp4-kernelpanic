@@ -5,66 +5,98 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
 #define NAME_SIZE 32
+
+typedef struct
+{
+    int fd;
+    char nombre[NAME_SIZE];
+} Cliente;
+
+Cliente clientes[MAX_CLIENTS];
+
+void enviar_lista_usuarios()
+{
+    char lista[BUFFER_SIZE] = "USERS|";
+    int primero = 1;
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clientes[i].fd != -1)
+        {
+            if (!primero)
+                strcat(lista, "|");
+            strcat(lista, clientes[i].nombre);
+            primero = 0;
+        }
+    }
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clientes[i].fd != -1)
+        {
+            send(clientes[i].fd, lista, strlen(lista), 0);
+        }
+    }
+}
+
+void enviar_privado(const char *remitente, const char *destino, const char *mensaje)
+{
+    char mensaje_formateado[BUFFER_SIZE];
+    snprintf(mensaje_formateado, sizeof(mensaje_formateado), "FROM|%s|%s", remitente, mensaje);
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, destino) == 0)
+        {
+            send(clientes[i].fd, mensaje_formateado, strlen(mensaje_formateado), 0);
+            break;
+        }
+    }
+}
 
 int main(int argc, char *argv[])
 {
     if (argc != 3)
     {
-        printf("Uso: [ip del servidor] [puerto]\n");
-        exit(EXIT_FAILURE);
-    }
-
-    const int port = atoi(argv[2]);
-    if (port <= 0 || port > 65535)
-    {
-        fprintf(stderr, "Error: Puerto inválido '%s'. Debe estar entre 1 y 65535.\n", argv[2]);
-        exit(EXIT_FAILURE);
+        printf("Uso: %s [IP] [PUERTO]\n", argv[0]);
+        return 1;
     }
 
     const char *ip = argv[1];
-    int server_fd, client_fd[2] = {-1, -1}, new_socket;
-    char nombres[MAX_CLIENTS][NAME_SIZE] = {"", ""}; // Nombres de los clientes
+    int puerto = atoi(argv[2]);
 
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
-    char buffer[BUFFER_SIZE];
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    struct sockaddr_in server_addr, cli_addr;
+    socklen_t cli_len = sizeof(cli_addr);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(puerto);
+    inet_pton(AF_INET, ip, &server_addr.sin_addr);
+
+    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("bind");
+        return 1;
+    }
+
+    if (listen(server_fd, MAX_CLIENTS) < 0)
+    {
+        perror("listen");
+        return 1;
+    }
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        clientes[i].fd = -1;
+
+    printf("Servidor escuchando en %s:%d\n", ip, puerto);
+
     fd_set readfds;
-
-    // Crear socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
-    {
-        perror("Fallo en socket");
-        exit(EXIT_FAILURE);
-    }
-
-    // Configurar dirección (configuracion de la estructura del socket)
-    address.sin_family = AF_INET;
-    address.sin_port = htons(port);
-
-    if (inet_pton(AF_INET, ip, &address.sin_addr) <= 0)
-    {
-        perror("Dirección IP inválida");
-        exit(EXIT_FAILURE);
-    }
-
-    // Asociar socket a dirección
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
-    {
-        perror("Fallo en bind");
-        exit(EXIT_FAILURE);
-    }
-
-    // Escuchar conexiones
-    if (listen(server_fd, 2) < 0)
-    {
-        perror("Fallo en listen");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Servidor esperando a dos clientes...\n");
 
     while (1)
     {
@@ -74,99 +106,97 @@ int main(int argc, char *argv[])
 
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
-            if (client_fd[i] != -1)
+            if (clientes[i].fd != -1)
             {
-                FD_SET(client_fd[i], &readfds);
-                if (client_fd[i] > max_fd)
-                    max_fd = client_fd[i];
+                FD_SET(clientes[i].fd, &readfds);
+                if (clientes[i].fd > max_fd)
+                    max_fd = clientes[i].fd;
             }
         }
 
         if (select(max_fd + 1, &readfds, NULL, NULL, NULL) < 0)
         {
-            perror("Error en select");
-            exit(EXIT_FAILURE);
+            perror("select");
+            continue;
         }
 
-        // Nueva conexión entrante
+        // Nueva conexión
         if (FD_ISSET(server_fd, &readfds))
         {
-            new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
-            if (new_socket < 0)
-            {
-                perror("Fallo en accept");
+            int nuevo_fd = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
+            if (nuevo_fd < 0)
                 continue;
-            }
 
-            
-            // Aceptar hasta 2 clientes
-            int assigned = 0;
+            int idx_libre = -1;
             for (int i = 0; i < MAX_CLIENTS; i++)
             {
-                if (client_fd[i] == -1)
+                if (clientes[i].fd == -1)
                 {
-                    client_fd[i] = new_socket;
-                    printf("Cliente %d conectado\n", i + 1);
-                    assigned = 1;
-
-                    int bytes = recv(new_socket, buffer, BUFFER_SIZE - 1, 0);
-                    if (bytes > 0)
-                    {
-                        buffer[bytes] = '\0';
-                        strncpy(nombres[i], buffer, NAME_SIZE - 1);
-                        nombres[i][NAME_SIZE - 1] = '\0'; // asegurar terminación
-                        printf("Cliente %d se llama %s\n", i + 1, nombres[i]);
-                    }
-
+                    idx_libre = i;
                     break;
                 }
             }
 
-            if (!assigned)
+            if (idx_libre == -1)
             {
-                char *msg = "Servidor ocupado. Intente más tarde.\n";
-                send(new_socket, msg, strlen(msg), 0);
-                close(new_socket);
+                char *msg = "Servidor lleno\n";
+                send(nuevo_fd, msg, strlen(msg), 0);
+                close(nuevo_fd);
+            }
+            else
+            {
+                // Recibir nombre
+                char buffer[NAME_SIZE];
+                int bytes = recv(nuevo_fd, buffer, NAME_SIZE - 1, 0);
+                if (bytes <= 0)
+                {
+                    close(nuevo_fd);
+                    continue;
+                }
+                buffer[bytes] = '\0';
+
+                clientes[idx_libre].fd = nuevo_fd;
+                strncpy(clientes[idx_libre].nombre, buffer, NAME_SIZE - 1);
+                clientes[idx_libre].nombre[NAME_SIZE - 1] = '\0';
+
+                printf("Conectado: %s\n", clientes[idx_libre].nombre);
+                enviar_lista_usuarios();
             }
         }
 
-        // Comunicación entre clientes
+        // Mensajes de clientes
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
-            if (client_fd[i] != -1 && FD_ISSET(client_fd[i], &readfds))
+            if (clientes[i].fd != -1 && FD_ISSET(clientes[i].fd, &readfds))
             {
-                int bytes = recv(client_fd[i], buffer, BUFFER_SIZE - 1, 0);
+                char buffer[BUFFER_SIZE];
+                int bytes = recv(clientes[i].fd, buffer, BUFFER_SIZE - 1, 0);
                 if (bytes <= 0)
                 {
-                    printf("Cliente %d desconectado\n", i + 1);
-                    close(client_fd[i]);
-                    client_fd[i] = -1;
-
-                    // Cierra la conexión del otro cliente también
-                    int other = (i + 1) % 2;
-                    if (client_fd[other] != -1)
-                    {
-                        char *msg = "El otro usuario se desconectó.\n";
-                        send(client_fd[other], msg, strlen(msg), 0);
-                        close(client_fd[other]);
-                        client_fd[other] = -1;
-                    }
+                    printf("Desconectado: %s\n", clientes[i].nombre);
+                    close(clientes[i].fd);
+                    clientes[i].fd = -1;
+                    enviar_lista_usuarios();
+                    continue;
                 }
-                else
-                {
-                    buffer[bytes] = '\0';
-                    int other = (i + 1) % 2;
 
-                    if (client_fd[other] != -1)
+                buffer[bytes] = '\0';
+
+                // Parsear TO|destino|mensaje
+                char *cmd = strtok(buffer, "|");
+                if (cmd && strcmp(cmd, "TO") == 0)
+                {
+                    char *destino = strtok(NULL, "|");
+                    char *mensaje = strtok(NULL, "");
+                    if (destino && mensaje)
                     {
-                        char mensaje_formateado[BUFFER_SIZE + NAME_SIZE + 16];
-                        snprintf(mensaje_formateado, sizeof(mensaje_formateado), "%s: %s", nombres[i], buffer);
-                        send(client_fd[other], mensaje_formateado, strlen(mensaje_formateado), 0);
+                        enviar_privado(clientes[i].nombre, destino, mensaje);
                     }
                 }
             }
         }
     }
 
+    close(server_fd);
     exit(EXIT_SUCCESS);
 }
