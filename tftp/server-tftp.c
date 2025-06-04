@@ -38,16 +38,18 @@ int main(int argc, char *argv[])
     }
 
     memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(1069); // TFTP port
+    server_addr.sin_family = AF_INET;  //Familia de direcciones IPv4.
+    server_addr.sin_addr.s_addr = INADDR_ANY; //Escucha en todas las interfaces de red.
+    server_addr.sin_port = htons(28002); // TFTP port
 
+    //Vincula el socket a la dirección y puerto especificados. Si falla, se imprime un error y el programa finaliza.
     if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("bind");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
+
 
     printf("Servidor TFTP escuchando en el puerto %d...\n", ntohs(server_addr.sin_port));
 
@@ -75,19 +77,44 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
 }
 
+//Read Request
 void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen_t addr_len, int bytes_recv)
 {
     char *filename = &buffer[2];
     char *mode = filename + strlen(filename) + 1;
     printf("Received RRQ for file: %s, mode: %s\b", filename, mode);
 
-    FILE *file = fopen(filename, "rb");
+  /*   FILE *file = fopen(filename, "rb");
     if (!file)
     {
         perror("fopen");
         close(sockfd);
         exit(EXIT_FAILURE);
+    } */
+   //---
+    FILE *file = fopen(filename, "rb");
+            if (file == NULL) {
+        /* fopen falló → construyo y envío paquete ERROR(1) en este mismo bloque */
+        uint8_t err_buf[4 + 16 + 1];
+        uint16_t op_net = htons(5);   /* opcode = 5 (ERROR) */
+        memcpy(err_buf + 0, &op_net, 2);
+
+        uint16_t code_net = htons(1); /* código = 1 (File not found) */
+        memcpy(err_buf + 2, &code_net, 2);
+
+        /* Mensaje ASCII corto: “File not found” */
+        const char *msg = "File not found";
+        memcpy(err_buf + 4, msg, strlen(msg));
+        /* err_buf[4 + strlen(msg)] ya está a '\0' */
+        
+        /* Enviar por UDP de inmediato */
+        sendto(sockfd, err_buf, 4 + strlen(msg) + 1, 0,
+            (struct sockaddr *)&client_addr, addr_len);
+
+        close(sockfd);
+        return;
     }
+//--
 
     uint16_t block = 1;
 
@@ -107,6 +134,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
             break;
         }
 
+        //espera el ACK del cliente...
         bytes_recv = recvfrom(sockfd, buffer, sizeof(*buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (bytes_recv < 0)
         {
@@ -121,6 +149,9 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
             break;
         }
 
+        //Si se leyó menos de 512 bytes, 
+        //significa que fue el último bloque del archivo, 
+        //y se rompe el bucle.
         if (bytes_read < sizeof(packet.data))
             break;
 
@@ -133,10 +164,37 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
 
 void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen_t addr_len)
 {
+    // 1. Extraer nombre de archivo y modo (netascii, octet, etc.)
     char *filename = &buffer[2];
     char *mode = filename + strlen(filename) + 1;
     printf("Received WRQ for file: %s, mode: %s\b", filename, mode);
 
+    /* 1) Verificar si el archivo YA existe */
+      if (access(filename, F_OK) == 0)
+    {
+        /* Construir y enviar paquete ERROR(6, "File already exists") en línea */
+        uint8_t err_buf[4 + 20 + 1] = { 0 };
+        uint16_t op_net   = htons(5);  /* opcode = 5 (ERROR) */
+        memcpy(err_buf + 0, &op_net, 2);
+        uint16_t code_net = htons(6);  /* código = 6 (File already exists) */
+        memcpy(err_buf + 2, &code_net, 2);
+        const char *msg = "File already exists";
+        size_t msg_len = strlen(msg);
+        memcpy(err_buf + 4, msg, msg_len);
+        /* err_buf[4 + msg_len] ya está a 0 por la inicialización */
+
+        sendto(sockfd,
+               err_buf,
+               4 + msg_len + 1,
+               0,
+               (struct sockaddr *)&client_addr,
+               addr_len);
+
+        close(sockfd);
+        return;
+    }
+
+    // 2. Abrir (o crear) el archivo en modo binario para escritura
     FILE *file = fopen(filename, "wb");
     if (!file)
     {
@@ -145,11 +203,16 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         exit(EXIT_FAILURE);
     }
 
+    // 3. Enviar ACK0 para indicar al cliente que comience a mandar datos
     send_ack(sockfd, &client_addr, addr_len, 0);
     printf("ACK 0 enviado\b");
 
-    uint16_t expected_block = 1;
 
+    // 4. Inicializar el número de bloque esperado:
+    //    el primer bloque de datos que llegará será el bloque #1
+    uint16_t expected_block = 1;
+    
+    // 5. Bucle de recepción de datos hasta que se complete la transferencia
     while (1)
     {
         char buffer_data[516] = {0};
@@ -160,6 +223,7 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
             break;
         }
 
+        // 5.a) Interpretar lo recibido como un paquete TFTP DATA
         struct tftp_data *data_packet = (struct tftp_data *)buffer_data;
 
         uint16_t opcode = ntohs(data_packet->opcode);
