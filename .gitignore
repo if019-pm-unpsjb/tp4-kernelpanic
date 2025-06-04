@@ -72,7 +72,7 @@ chat/bin/*
 # python
 .venv/
 .vscode/
-gui/__pycache__/
-gui/dist/
-gui/build/
-gui/*.spec
+__pycache__/
+dist/
+build/
+*.spec

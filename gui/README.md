@@ -44,7 +44,7 @@ Una vez instalado todo, puedes ejecutar el codigo desde `gui/main.py`.
 Comando para empaquetar la aplicacion:
 
 ```sh
-pyinstaller gui/main.py --onefile --add-data "gui/img/openchat_logo.png:img" --add-data "gui/img/icon.png:img" --icon=gui/img/icon.ico --name OpenChat
+pyinstaller gui/main.py --onefile --noconsole --add-data "gui/img/openchat_logo.png:img" --add-data "gui/img/icon.png:img" --icon=gui/img/icon.ico --name OpenChat
 ```
 
 El ejecutable resultado esta en la carpeta dist.
