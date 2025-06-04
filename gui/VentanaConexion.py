@@ -2,6 +2,10 @@ import tkinter as tk
 import socket
 from tkinter import PhotoImage
 from ChatCliente import ChatCliente
+import os
+
+# Ruta base al directorio de este archivo
+base_path = os.path.dirname(os.path.abspath(__file__))
 
 class VentanaConexion:
     def __init__(self, master):
@@ -11,8 +15,11 @@ class VentanaConexion:
         self.master.resizable(False, False)
         self.master.columnconfigure(0, weight=1)
 
-        self.master.iconphoto(True, PhotoImage(file="../img/icon.png"))
-        tk.Label(master, image=PhotoImage(file="../img/openchat_logo.png")).grid(row=0, column=0, pady=(10, 0))
+        self.logo_img = PhotoImage(file=os.path.join(base_path, "img", "openchat_logo.png"))
+        self.icon_img = PhotoImage(file=os.path.join(base_path, "img", "icon.png"))
+
+        tk.Label(master, image=self.logo_img).grid(row=0, column=0, pady=(10, 0))
+        self.master.iconphoto(True, self.icon_img)
 
         # Entradas
         tk.Label(master, text="Nombre:").grid(row=1, column=0, sticky="w", padx=20, pady=(10, 0))
