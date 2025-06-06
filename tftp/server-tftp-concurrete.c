@@ -317,7 +317,6 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
 
         expected_block++;
     }
-recibi
     fclose(file);
     printf("Archivo recibido exitosamente.\b");
 }
