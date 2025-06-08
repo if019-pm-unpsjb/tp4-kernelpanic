@@ -1,6 +1,3 @@
 {
-    "C_Cpp.errorSquiggles": "disabled",
-    "python.analysis.extraPaths": [
-        "./gui"
-    ]
+    "C_Cpp.errorSquiggles": "disabled"
 }

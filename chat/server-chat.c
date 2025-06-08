@@ -1,145 +1,70 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-typedef int socklen_t;
-#define CERRAR_SOCKET(s) closesocket(s)
-#else
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/select.h>
-#define CERRAR_SOCKET(s) close(s)
-#endif
 
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 2
 #define BUFFER_SIZE 1024
 #define NAME_SIZE 32
-
-typedef struct
-{
-    int fd;
-    char nombre[NAME_SIZE];
-} Cliente;
-
-Cliente clientes[MAX_CLIENTS];
-
-void inicializar_clientes()
-{
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        clientes[i].fd = -1;
-        clientes[i].nombre[0] = '\0';
-    }
-}
-
-int nombre_duplicado(const char *nombre)
-{
-    for (int i = 0; i < MAX_CLIENTS; i++)
-        if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, nombre) == 0)
-            return 1;
-    return 0;
-}
-
-void enviar_lista_usuarios()
-{
-    char lista[BUFFER_SIZE] = "USERS|";
-    int primero = 1;
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clientes[i].fd != -1)
-        {
-            if (!primero)
-                strncat(lista, "|", sizeof(lista) - strlen(lista) - 1);
-            strncat(lista, clientes[i].nombre, sizeof(lista) - strlen(lista) - 1);
-            primero = 0;
-        }
-    }
-
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clientes[i].fd != -1)
-            send(clientes[i].fd, lista, strlen(lista), 0);
-    }
-}
-
-void enviar_privado(const char *remitente, const char *destino, const char *mensaje)
-{
-    char mensaje_formateado[BUFFER_SIZE];
-    snprintf(mensaje_formateado, sizeof(mensaje_formateado), "FROM|%s|%s", remitente, mensaje);
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, destino) == 0)
-        {
-            send(clientes[i].fd, mensaje_formateado, strlen(mensaje_formateado), 0);
-            return;
-        }
-    }
-}
-
-void desconectar_cliente(int idx)
-{
-    printf("Desconectado: %s\n", clientes[idx].nombre);
-    CERRAR_SOCKET(clientes[idx].fd);
-    clientes[idx].fd = -1;
-    clientes[idx].nombre[0] = '\0';
-    enviar_lista_usuarios();
-}
 
 int main(int argc, char *argv[])
 {
     if (argc != 3)
     {
-        printf("Uso: %s [IP] [PUERTO]\n", argv[0]);
+        printf("Uso: [ip del servidor] [puerto]\n");
         exit(EXIT_FAILURE);
     }
 
-#ifdef _WIN32
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    const int port = atoi(argv[2]);
+    if (port <= 0 || port > 65535)
     {
-        printf("Error al iniciar Winsock: %d\n", WSAGetLastError());
-        return 1;
+        fprintf(stderr, "Error: Puerto inválido '%s'. Debe estar entre 1 y 65535.\n", argv[2]);
+        exit(EXIT_FAILURE);
     }
-#endif
 
     const char *ip = argv[1];
-    int puerto = atoi(argv[2]);
+    int server_fd, client_fd[2] = {-1, -1}, new_socket;
+    char nombres[MAX_CLIENTS][NAME_SIZE] = {"", ""}; // Nombres de los clientes
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0)
-    {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-
-    struct sockaddr_in server_addr, cli_addr;
-    socklen_t cli_len = sizeof(cli_addr);
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(puerto);
-    server_addr.sin_addr.s_addr = inet_addr(ip);
-
-    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-    {
-        perror("bind");
-        exit(EXIT_FAILURE);
-    }
-
-    if (listen(server_fd, MAX_CLIENTS) < 0)
-    {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
-
-    inicializar_clientes();
-    printf("Servidor escuchando en %s:%d\n", ip, puerto);
-
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    char buffer[BUFFER_SIZE];
     fd_set readfds;
+
+    // Crear socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
+    {
+        perror("Fallo en socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Configurar dirección (configuracion de la estructura del socket)
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip, &address.sin_addr) <= 0)
+    {
+        perror("Dirección IP inválida");
+        exit(EXIT_FAILURE);
+    }
+
+    // Asociar socket a dirección
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    {
+        perror("Fallo en bind");
+        exit(EXIT_FAILURE);
+    }
+
+    // Escuchar conexiones
+    if (listen(server_fd, 2) < 0)
+    {
+        perror("Fallo en listen");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Servidor esperando a dos clientes...\n");
 
     while (1)
     {
@@ -149,92 +74,99 @@ int main(int argc, char *argv[])
 
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
-            if (clientes[i].fd != -1)
+            if (client_fd[i] != -1)
             {
-                FD_SET(clientes[i].fd, &readfds);
-                if (clientes[i].fd > max_fd)
-                    max_fd = clientes[i].fd;
+                FD_SET(client_fd[i], &readfds);
+                if (client_fd[i] > max_fd)
+                    max_fd = client_fd[i];
             }
         }
 
         if (select(max_fd + 1, &readfds, NULL, NULL, NULL) < 0)
         {
-            perror("select");
-            continue;
+            perror("Error en select");
+            exit(EXIT_FAILURE);
         }
 
+        // Nueva conexión entrante
         if (FD_ISSET(server_fd, &readfds))
         {
-            int nuevo_fd = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
-            if (nuevo_fd < 0)
+            new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+            if (new_socket < 0)
+            {
+                perror("Fallo en accept");
                 continue;
+            }
 
-            int idx_libre = -1;
+            
+            // Aceptar hasta 2 clientes
+            int assigned = 0;
             for (int i = 0; i < MAX_CLIENTS; i++)
             {
-                if (clientes[i].fd == -1)
+                if (client_fd[i] == -1)
                 {
-                    idx_libre = i;
+                    client_fd[i] = new_socket;
+                    printf("Cliente %d conectado\n", i + 1);
+                    assigned = 1;
+
+                    int bytes = recv(new_socket, buffer, BUFFER_SIZE - 1, 0);
+                    if (bytes > 0)
+                    {
+                        buffer[bytes] = '\0';
+                        strncpy(nombres[i], buffer, NAME_SIZE - 1);
+                        nombres[i][NAME_SIZE - 1] = '\0'; // asegurar terminación
+                        printf("Cliente %d se llama %s\n", i + 1, nombres[i]);
+                    }
+
                     break;
                 }
             }
 
-            if (idx_libre == -1)
+            if (!assigned)
             {
-                char *msg = "Servidor lleno\n";
-                send(nuevo_fd, msg, strlen(msg), 0);
-                CERRAR_SOCKET(nuevo_fd);
-                continue;
+                char *msg = "Servidor ocupado. Intente más tarde.\n";
+                send(new_socket, msg, strlen(msg), 0);
+                close(new_socket);
             }
-
-            char nombre[NAME_SIZE] = {0};
-            int bytes = recv(nuevo_fd, nombre, NAME_SIZE - 1, 0);
-            if (bytes <= 0 || nombre_duplicado(nombre))
-            {
-                char *msg = "Nombre inválido o duplicado\n";
-                send(nuevo_fd, msg, strlen(msg), 0);
-                CERRAR_SOCKET(nuevo_fd);
-                continue;
-            }
-
-            nombre[bytes] = '\0';
-            strncpy(clientes[idx_libre].nombre, nombre, NAME_SIZE - 1);
-            clientes[idx_libre].fd = nuevo_fd;
-
-            printf("Conectado: %s\n", clientes[idx_libre].nombre);
-            enviar_lista_usuarios();
         }
 
+        // Comunicación entre clientes
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
-            if (clientes[i].fd != -1 && FD_ISSET(clientes[i].fd, &readfds))
+            if (client_fd[i] != -1 && FD_ISSET(client_fd[i], &readfds))
             {
-                char buffer[BUFFER_SIZE] = {0};
-                int bytes = recv(clientes[i].fd, buffer, BUFFER_SIZE - 1, 0);
+                int bytes = recv(client_fd[i], buffer, BUFFER_SIZE - 1, 0);
                 if (bytes <= 0)
                 {
-                    desconectar_cliente(i);
-                    continue;
-                }
+                    printf("Cliente %d desconectado\n", i + 1);
+                    close(client_fd[i]);
+                    client_fd[i] = -1;
 
-                buffer[bytes] = '\0';
-                char *cmd = strtok(buffer, "|");
-                if (cmd && strcmp(cmd, "TO") == 0)
+                    // Cierra la conexión del otro cliente también
+                    int other = (i + 1) % 2;
+                    if (client_fd[other] != -1)
+                    {
+                        char *msg = "El otro usuario se desconectó.\n";
+                        send(client_fd[other], msg, strlen(msg), 0);
+                        close(client_fd[other]);
+                        client_fd[other] = -1;
+                    }
+                }
+                else
                 {
-                    char *destino = strtok(NULL, "|");
-                    char *mensaje = strtok(NULL, "");
-                    if (destino && mensaje)
-                        enviar_privado(clientes[i].nombre, destino, mensaje);
+                    buffer[bytes] = '\0';
+                    int other = (i + 1) % 2;
+
+                    if (client_fd[other] != -1)
+                    {
+                        char mensaje_formateado[BUFFER_SIZE + NAME_SIZE + 16];
+                        snprintf(mensaje_formateado, sizeof(mensaje_formateado), "%s: %s", nombres[i], buffer);
+                        send(client_fd[other], mensaje_formateado, strlen(mensaje_formateado), 0);
+                    }
                 }
             }
         }
     }
 
-    CERRAR_SOCKET(server_fd);
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
-
-    return 0;
+    exit(EXIT_SUCCESS);
 }
