@@ -221,7 +221,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         }
 
         //espera el ACK del cliente...
-        bytes_recv = recvfrom(sockfd, buffer, sizeof(*buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
+        bytes_recv = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (bytes_recv < 0)
         {
             perror("recvfrom ACK");
@@ -340,7 +340,7 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         expected_block++;
     }
     fclose(file);
-    printf("Archivo recibido exitosamente.\b");
+    printf("Archivo recibido exitosamente.\n");
 }
 
 void send_ack(int sockfd, struct sockaddr_in *client_addr, socklen_t addr_len, uint16_t block)
@@ -353,7 +353,7 @@ void send_ack(int sockfd, struct sockaddr_in *client_addr, socklen_t addr_len, u
     if (sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)client_addr, addr_len) < 0)
     {
         perror("sendto");
-        exit(EXIT_FAILURE);
         printf("ack: %ld", sizeof(ack));
+        exit(EXIT_FAILURE);
     }
 }

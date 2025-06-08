@@ -1,4 +1,6 @@
-# Protocolo TFTP Personalizado (con Control de Errores)
+# Documento de Procotolo TFTP v1.2
+
+## Protocolo TFTP Personalizado (con Control de Errores)
 
 **Fecha:** Junio 2025
 **Autor:** I. Grilli
