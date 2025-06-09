@@ -14,6 +14,7 @@
 
 */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +24,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/wait.h>
-
 
 struct tftp_data {
     uint16_t opcode;  // 3 = DATA
@@ -44,16 +44,18 @@ void sigchld_handler(int signo) {
     while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
-
-
-#define PORT_BASE   28002
 #define MAX_BUFFER  516
 
 // Lleva la cuenta de qué puerto usará el siguiente proceso hijo.
 // Empieza en PORT_BASE+1 y va subiendo.
-static uint16_t next_port = PORT_BASE + 1;
 
-int main() {
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+      perror("Uso [puerto]");
+      exit(EXIT_FAILURE);
+    }
+    const int PORT_BASE = atoi(argv[1]);
+    uint16_t next_port = PORT_BASE + 1;
     int server_fd, opt = 1;
     struct sockaddr_in server_addr, client_addr;
     char buffer[MAX_BUFFER];
@@ -85,7 +87,6 @@ int main() {
     }
 
     printf("Servidor TFTP escuchando en puerto %d\n", PORT_BASE);
-
 
     while (1) {
         int bytes_recv = recvfrom(server_fd, buffer, sizeof(buffer), 0,
@@ -221,7 +222,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         }
 
         //espera el ACK del cliente...
-        bytes_recv = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
+        bytes_recv = recvfrom(sockfd, buffer, sizeof(&buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (bytes_recv < 0)
         {
             perror("recvfrom ACK");

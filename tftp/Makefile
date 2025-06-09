@@ -2,14 +2,14 @@ CC=gcc
 CFLAGS=-Wall -Werror -g -pthread 
 BIN=./bin
 
-PROGS=server-tftp
+PROGS=server-tftp-concurrente
 
 .PHONY: all
 all: $(PROGS)
 
 LIST=$(addprefix $(BIN)/, $(PROGS))
 
-server-tftp: server-tftp.c 
+server-tftp-concurrente: server-tftp-concurrente.c 
 	$(CC) -o bin/$@ $^ $(CFLAGS)
 
 .PHONY: clean
