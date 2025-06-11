@@ -50,10 +50,12 @@ void sigchld_handler(int signo) {
 // Empieza en PORT_BASE+1 y va subiendo.
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-      perror("Uso [puerto]");
+    if (argc != 2) 
+    {
+      printf("Uso: %s [PUERTO]\n", argv[0]);
       exit(EXIT_FAILURE);
     }
+
     const int PORT_BASE = atoi(argv[1]);
     uint16_t next_port = PORT_BASE + 1;
     int server_fd, opt = 1;
@@ -169,7 +171,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
 {
     char *filename = &buffer[2];
     char *mode = filename + strlen(filename) + 1;
-    printf("Received RRQ for file: %s, mode: %s\b \n", filename, mode);
+    printf("Received RRQ for file: %s, mode: %s\n", filename, mode);
 
   /*   FILE *file = fopen(filename, "rb");
     if (!file)
@@ -222,7 +224,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         }
 
         //espera el ACK del cliente...
-        bytes_recv = recvfrom(sockfd, buffer, sizeof(&buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
+        bytes_recv = recvfrom(sockfd, buffer, MAX_BUFFER, 0, (struct sockaddr *)&client_addr, &addr_len);
         if (bytes_recv < 0)
         {
             perror("recvfrom ACK");
@@ -232,7 +234,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
         struct tftp_ack *ack = (struct tftp_ack *)buffer;
         if (ntohs(ack->opcode) != 4 || ntohs(ack->block) != block)
         {
-            fprintf(stderr, "Invalid ACK received\b \n");
+            fprintf(stderr, "Invalid ACK received\n");
             break;
         }
 
@@ -246,7 +248,7 @@ void tftp_rrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
     }
 
     fclose(file);
-    printf("Archivo enviado exitosamente.\b");
+    printf("Archivo enviado exitosamente.\n");
 }
 
 void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen_t addr_len)
@@ -254,7 +256,7 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
     // 1. Extraer nombre de archivo y modo (netascii, octet, etc.)
     char *filename = &buffer[2];
     char *mode = filename + strlen(filename) + 1;
-    printf("Received WRQ for file: %s, mode: %s\b \n", filename, mode);
+    printf("Received WRQ for file: %s, mode: %s\n", filename, mode);
 
     /* 1) Verificar si el archivo YA existe */
       if (access(filename, F_OK) == 0)
@@ -318,7 +320,7 @@ void tftp_wrq(char buffer[], int sockfd, struct sockaddr_in client_addr, socklen
 
         if (opcode != 3)
         {
-            fprintf(stderr, "Esperado DATA (3), recibido opcode %d\b", opcode);
+            fprintf(stderr, "Esperado DATA (3), recibido opcode %d\n", opcode);
             break;
         }
 

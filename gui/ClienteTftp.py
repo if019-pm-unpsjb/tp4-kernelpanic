@@ -88,7 +88,11 @@ def tftp_get(filename, server_data, mostrar_mensaje=None):
                 expected_block += 1
         sock.close()
         if mostrar_mensaje:
-            mostrar_mensaje("Sistema", f"Archivo {filename} recibido en:\n{ruta_guardado}")
+            mensaje_exito = (
+                f"Archivo '{filename}' recibido exitosamente.\n"
+                f"Guardado en: {os.path.abspath(ruta_guardado)}"
+            )
+            mostrar_mensaje("Sistema", mensaje_exito)
     except Exception as e:
         if mostrar_mensaje:
             mostrar_mensaje("Sistema", f"Error en TFTP GET: {e}")
