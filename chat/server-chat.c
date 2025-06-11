@@ -93,9 +93,9 @@ void desconectar_cliente(int idx)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
+    if (argc != 2)
     {
-        printf("Uso: %s [IP] [PUERTO]\n", argv[0]);
+        printf("Uso: %s [PUERTO]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -108,8 +108,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    const char *ip = argv[1];
-    int puerto = atoi(argv[2]);
+    int puerto = atoi(argv[1]);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
@@ -122,7 +121,7 @@ int main(int argc, char *argv[])
     socklen_t cli_len = sizeof(cli_addr);
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(puerto);
-    server_addr.sin_addr.s_addr = inet_addr(ip);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
@@ -137,7 +136,7 @@ int main(int argc, char *argv[])
     }
 
     inicializar_clientes();
-    printf("Servidor escuchando en %s:%d\n", ip, puerto);
+    printf("Servidor escuchando en el puerto %d\n", puerto);
 
     fd_set readfds;
 

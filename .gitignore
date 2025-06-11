@@ -71,3 +71,6 @@ chat/bin/*
 
 # python
 .venv/
+dist/
+build/
+*.spec
