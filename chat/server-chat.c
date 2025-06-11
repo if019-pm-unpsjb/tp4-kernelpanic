@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -20,6 +21,8 @@ typedef int socklen_t;
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
 #define NAME_SIZE 32
+#define FILE_CHUNK_SIZE 1024
+
 
 typedef struct
 {
@@ -68,6 +71,8 @@ void enviar_lista_usuarios()
     }
 }
 
+
+
 void enviar_privado(const char *remitente, const char *destino, const char *mensaje)
 {
     char mensaje_formateado[BUFFER_SIZE];
@@ -79,6 +84,41 @@ void enviar_privado(const char *remitente, const char *destino, const char *mens
             send(clientes[i].fd, mensaje_formateado, strlen(mensaje_formateado), 0);
             return;
         }
+    }
+}
+
+void enviar_archivo(int idx_emisor, const char *destino, const char *filename, long filesize) {
+    char header[BUFFER_SIZE];
+    // Cabecera: FILE|remitente|filename|filesize
+    snprintf(header, sizeof(header), "FILE|%s|%s|%ld", 
+             clientes[idx_emisor].nombre, filename, filesize);
+
+    // Buscar socket del destino
+    int fd_dest = -1;
+    for (int j = 0; j < MAX_CLIENTS; j++) {
+        if (clientes[j].fd != -1 && strcmp(clientes[j].nombre, destino) == 0) {
+            fd_dest = clientes[j].fd;
+            break;
+        }
+    }
+    if (fd_dest == -1) {
+        char *err = "ERROR|Usuario receptor no encontrado\n";
+        send(clientes[idx_emisor].fd, err, strlen(err), 0);
+        return;
+    }
+
+    // Enviar cabecera al receptor
+    send(fd_dest, header, strlen(header), 0);
+
+    // Transmitir el contenido en chunks
+    long remaining = filesize;
+    char chunk[FILE_CHUNK_SIZE];
+    while (remaining > 0) {
+        int to_read = remaining > FILE_CHUNK_SIZE ? FILE_CHUNK_SIZE : remaining;
+        int r = recv(clientes[idx_emisor].fd, chunk, to_read, 0);
+        if (r <= 0) break;                 // error o cliente desconectado
+        send(fd_dest, chunk, r, 0);
+        remaining -= r;
     }
 }
 
@@ -213,6 +253,18 @@ int main(int argc, char *argv[])
                 if (bytes <= 0)
                 {
                     desconectar_cliente(i);
+                    continue;
+                }
+
+                // Protocolo: FILE|destino|filename|size
+                if (strncmp(buffer, "FILE|", 5) == 0) {
+                    buffer[bytes] = '\0';
+                    char *p = buffer + 5;
+                    char *dest   = strtok(p, "|");
+                    char *fname  = strtok(NULL, "|");
+                    char *sz     = strtok(NULL, "|");
+                    long fsize   = atol(sz);
+                    enviar_archivo(i, dest, fname, fsize);
                     continue;
                 }
 

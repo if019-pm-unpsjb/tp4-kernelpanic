@@ -7,32 +7,28 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <errno.h>
 
 #define BUFFER_SIZE 1024
+#define FILE_CHUNK_SIZE 1024
+
+void enviar_archivo_client(int sock, const char *dest, const char *filepath);
 
 int main(int argc, char *argv[])
 {
     if (argc != 3)
     {
-        printf("Uso: [ip del servidor] [puerto]\n");
+        fprintf(stderr, "Uso: %s <IP> <Puerto>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-
-    const int port = atoi(argv[2]);
-    if (port <= 0 || port > 65535)
-    {
-        fprintf(stderr, "Error: Puerto inválido '%s'. Debe estar entre 1 y 65535.\n", argv[2]);
-        exit(EXIT_FAILURE);
-    }
-
-    const char *ip = argv[1];
 
     int sock;
     struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
     fd_set read_fds;
+    char buffer[BUFFER_SIZE];
+    const char *ip = argv[1];
+    int port = atoi(argv[2]);
 
-    // Crear socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("Error al crear el socket");
@@ -42,61 +38,114 @@ int main(int argc, char *argv[])
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
 
-    // Convertir IP a binario
     if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0)
     {
         perror("Dirección IP inválida");
         exit(EXIT_FAILURE);
     }
 
-    // Conectarse al servidor
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("Conexión fallida");
         exit(EXIT_FAILURE);
     }
 
-    printf("Conectado al servidor. Escribe tus mensajes:\n");
+    printf("Conectado al servidor. Escriba sus mensajes o '/file <dest> <ruta>' para enviar archivos:\n");
 
     while (1)
     {
         FD_ZERO(&read_fds);
-        FD_SET(STDIN_FILENO, &read_fds); // Teclado
-        FD_SET(sock, &read_fds);         // Socket
+        FD_SET(STDIN_FILENO, &read_fds);
+        FD_SET(sock, &read_fds);
 
-        int max_fd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
-        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
+        if (select(sock + 1, &read_fds, NULL, NULL, NULL) < 0)
         {
             perror("select");
-            exit(EXIT_FAILURE);
+            break;
         }
 
-        // Leer mensaje del servidor
         if (FD_ISSET(sock, &read_fds))
         {
             int bytes = recv(sock, buffer, BUFFER_SIZE - 1, 0);
-            
             if (bytes <= 0)
             {
                 printf("Servidor desconectado.\n");
                 break;
             }
-            
             buffer[bytes] = '\0';
-            printf("\n[Mensaje]: %s\n", buffer);
-            printf("> ");
-            fflush(stdout);
+
+            if (strncmp(buffer, "FILE|", 5) == 0)
+            {
+                // Procesar recepción de archivo
+                char *p = buffer + 5;
+                char *remit = strtok(p, "|");
+                char *filename = strtok(NULL, "|");
+                char *sz = strtok(NULL, "|");
+                long filesize = atol(sz);
+
+                // Preparar nombre de archivo local
+                char *base = strrchr(filename, '/');
+                char localfile[256];
+                if (base)
+                    snprintf(localfile, sizeof(localfile), "recv_%s", base + 1);
+                else
+                    snprintf(localfile, sizeof(localfile), "recv_%s", filename);
+
+                FILE *f = fopen(localfile, "wb");
+                if (!f)
+                {
+                    perror("Error al crear el archivo de recepción");
+                    continue;
+                }
+
+                long total_written = 0;
+                while (total_written < filesize)
+                {
+                    int to_read = (filesize - total_written > BUFFER_SIZE) ? BUFFER_SIZE : (filesize - total_written);
+                    int r = recv(sock, buffer, to_read, 0);
+                    if (r <= 0)
+                    {
+                        perror("Error al recibir datos de archivo");
+                        break;
+                    }
+                    fwrite(buffer, 1, r, f);
+                    total_written += r;
+                }
+                fclose(f);
+                printf("Archivo recibido de %s: %s (%ld bytes)\n", remit, localfile, total_written);
+            }
+            else
+            {
+                printf("%s", buffer);
+            }
         }
 
-        // Leer entrada del usuario
         if (FD_ISSET(STDIN_FILENO, &read_fds))
         {
             if (fgets(buffer, BUFFER_SIZE, stdin) != NULL)
             {
-                if (send(sock, buffer, strlen(buffer), 0) < 0)
+                // Enviar archivo con comando: /file <destino> <ruta>
+                if (strncmp(buffer, "/file ", 6) == 0)
                 {
-                    perror("Error al enviar");
-                    break;
+                    char *p = buffer + 6;
+                    char *dest = strtok(p, " \n");
+                    char *path = strtok(NULL, " \n");
+                    if (dest && path)
+                    {
+                        enviar_archivo_client(sock, dest, path);
+                    }
+                    else
+                    {
+                        printf("Uso: /file <destino> <ruta_del_archivo>\n");
+                    }
+                }
+                else
+                {
+                    if (send(sock, buffer, strlen(buffer), 0) < 0)
+                    {
+                        perror("Error al enviar");
+                        break;
+                    }
                 }
             }
         }
@@ -104,4 +153,52 @@ int main(int argc, char *argv[])
 
     close(sock);
     exit(EXIT_SUCCESS);
+}
+
+void enviar_archivo_client(int sock, const char *dest, const char *filepath)
+{
+    FILE *f = fopen(filepath, "rb");
+    if (!f)
+    {
+        perror("Error al abrir el archivo");
+        return;
+    }
+    if (fseek(f, 0, SEEK_END) != 0)
+    {
+        perror("fseek");
+        fclose(f);
+        return;
+    }
+    long filesize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char header[BUFFER_SIZE];
+    snprintf(header, sizeof(header), "FILE|%s|%s|%ld", dest, filepath, filesize);
+    if (send(sock, header, strlen(header), 0) < 0)
+    {
+        perror("Error al enviar cabecera de archivo");
+        fclose(f);
+        return;
+    }
+
+    char buf[FILE_CHUNK_SIZE];
+    long sent = 0;
+    while (sent < filesize)
+    {
+        size_t to_read = (filesize - sent > FILE_CHUNK_SIZE) ? FILE_CHUNK_SIZE : (filesize - sent);
+        size_t r = fread(buf, 1, to_read, f);
+        if (r <= 0)
+        {
+            perror("Error de lectura de archivo");
+            break;
+        }
+        if (send(sock, buf, r, 0) < 0)
+        {
+            perror("Error al enviar datos de archivo");
+            break;
+        }
+        sent += r;
+    }
+    fclose(f);
+    printf("Archivo enviado a %s: %s (%ld bytes)\n", dest, filepath, sent);
 }
