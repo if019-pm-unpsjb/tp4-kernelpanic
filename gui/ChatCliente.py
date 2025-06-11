@@ -187,7 +187,7 @@ class ChatCliente:
         comando = f"FILE|{destinatario}|{nombre_archivo}"
         try:
             self.socket.sendall(comando.encode())
-            self.mostrar_mensaje("Sistema", f"Enviando archivo {nombre_archivo} a {destinatario}...")
+            self.mostrar_mensaje("Sistema", f"Enviando archivo {nombre_archivo}...")
             # Enviar con tftp
             threading.Thread(
                     target=tftp_put,
