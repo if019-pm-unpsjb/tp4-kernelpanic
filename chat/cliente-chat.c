@@ -12,23 +12,32 @@
 #define BUFFER_SIZE 1024
 #define FILE_CHUNK_SIZE 1024
 
+//./cliente-chat <IP> <Puerto> <NombreUsuario>
+    // Protocolo: FILE|destino|filename|size
+    //ej:
+    //PRIV|Mati|¡Hola Mati, probando ahora sí!
+
+
+
 void enviar_archivo_client(int sock, const char *dest, const char *filepath);
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
+    if (argc != 4)
     {
-        fprintf(stderr, "Uso: %s <IP> <Puerto>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <IP> <Puerto> <NombreUsuario>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
+    const char *ip = argv[1];
+    int port = atoi(argv[2]);
+    const char *username = argv[3];
     int sock;
     struct sockaddr_in server_addr;
     fd_set read_fds;
     char buffer[BUFFER_SIZE];
-    const char *ip = argv[1];
-    int port = atoi(argv[2]);
 
+    // Crear socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("Error al crear el socket");
@@ -37,20 +46,32 @@ int main(int argc, char *argv[])
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-
     if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0)
     {
         perror("Dirección IP inválida");
+        close(sock);
         exit(EXIT_FAILURE);
     }
 
+    // Conectar al servidor
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("Conexión fallida");
+        close(sock);
         exit(EXIT_FAILURE);
     }
 
-    printf("Conectado al servidor. Escriba sus mensajes o '/file <dest> <ruta>' para enviar archivos:\n");
+    // Enviar nombre de usuario para registro
+    if (send(sock, username, strlen(username), 0) < 0)
+    {
+        perror("Error al enviar nombre de usuario");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+    // Enviar salto de línea para delimitar
+    send(sock, "\n", 1, 0);
+
+    printf("Conectado como '%s'.\nEscriba sus mensajes o '/file <destino> <ruta_del_archivo>' para enviar archivos:\n", username);
 
     while (1)
     {
@@ -64,6 +85,7 @@ int main(int argc, char *argv[])
             break;
         }
 
+        // Datos del servidor
         if (FD_ISSET(sock, &read_fds))
         {
             int bytes = recv(sock, buffer, BUFFER_SIZE - 1, 0);
@@ -73,6 +95,7 @@ int main(int argc, char *argv[])
                 break;
             }
             buffer[bytes] = '\0';
+            
 
             if (strncmp(buffer, "FILE|", 5) == 0)
             {
@@ -120,11 +143,12 @@ int main(int argc, char *argv[])
             }
         }
 
+        // Entrada del usuario
         if (FD_ISSET(STDIN_FILENO, &read_fds))
         {
             if (fgets(buffer, BUFFER_SIZE, stdin) != NULL)
             {
-                // Enviar archivo con comando: /file <destino> <ruta>
+                // Comando de envío de archivo
                 if (strncmp(buffer, "/file ", 6) == 0)
                 {
                     char *p = buffer + 6;
@@ -152,7 +176,7 @@ int main(int argc, char *argv[])
     }
 
     close(sock);
-    exit(EXIT_SUCCESS);
+    return 0;
 }
 
 void enviar_archivo_client(int sock, const char *dest, const char *filepath)
@@ -180,6 +204,7 @@ void enviar_archivo_client(int sock, const char *dest, const char *filepath)
         fclose(f);
         return;
     }
+    send(sock, "\n", 1, 0);
 
     char buf[FILE_CHUNK_SIZE];
     long sent = 0;
