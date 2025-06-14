@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -22,7 +21,6 @@ typedef int socklen_t;
 #define BUFFER_SIZE 1024
 #define NAME_SIZE 32
 #define FILE_CHUNK_SIZE 1024
-
 
 typedef struct
 {
@@ -71,15 +69,15 @@ void enviar_lista_usuarios()
     }
 }
 
-
-
-void enviar_privado(int idx_emisor, const char *dest, const char *texto) {
+void enviar_privado(int idx_emisor, const char *dest, const char *texto)
+{
     // Buscar socket de destino
     int fd_dest = -1;
     for (int j = 0; j < MAX_CLIENTS; j++)
         if (clientes[j].fd != -1 && strcmp(clientes[j].nombre, dest) == 0)
             fd_dest = clientes[j].fd;
-    if (fd_dest < 0) {
+    if (fd_dest < 0)
+    {
         char *err = "ERROR|Usuario no encontrado\n";
         send(clientes[idx_emisor].fd, err, strlen(err), 0);
         return;
@@ -91,21 +89,26 @@ void enviar_privado(int idx_emisor, const char *dest, const char *texto) {
     send(fd_dest, out, strlen(out), 0);
 }
 
-void enviar_archivo(int idx_emisor, const char *destino, const char *filename, long filesize) {
+void enviar_archivo(int idx_emisor, const char *destino, const char *filename, long filesize)
+{
     char header[BUFFER_SIZE];
+
     // Cabecera: FILE|remitente|filename|filesize
-    snprintf(header, sizeof(header), "FILE|%s|%s|%ld", 
+    snprintf(header, sizeof(header), "FILE|%s|%s|%ld\n",
              clientes[idx_emisor].nombre, filename, filesize);
 
     // Buscar socket del destino
     int fd_dest = -1;
-    for (int j = 0; j < MAX_CLIENTS; j++) {
-        if (clientes[j].fd != -1 && strcmp(clientes[j].nombre, destino) == 0) {
+    for (int j = 0; j < MAX_CLIENTS; j++)
+    {
+        if (clientes[j].fd != -1 && strcmp(clientes[j].nombre, destino) == 0)
+        {
             fd_dest = clientes[j].fd;
             break;
         }
     }
-    if (fd_dest == -1) {
+    if (fd_dest == -1)
+    {
         char *err = "ERROR|Usuario receptor no encontrado\n";
         send(clientes[idx_emisor].fd, err, strlen(err), 0);
         return;
@@ -117,10 +120,12 @@ void enviar_archivo(int idx_emisor, const char *destino, const char *filename, l
     // Transmitir el contenido en chunks
     long remaining = filesize;
     char chunk[FILE_CHUNK_SIZE];
-    while (remaining > 0) {
+    while (remaining > 0)
+    {
         int to_read = remaining > FILE_CHUNK_SIZE ? FILE_CHUNK_SIZE : remaining;
         int r = recv(clientes[idx_emisor].fd, chunk, to_read, 0);
-        if (r <= 0) break;                 // error o cliente desconectado
+        if (r <= 0)
+            break; // error o cliente desconectado
         send(fd_dest, chunk, r, 0);
         remaining -= r;
     }
@@ -206,57 +211,56 @@ int main(int argc, char *argv[])
             continue;
         }
 
-      if (FD_ISSET(server_fd, &readfds))
-{
-    int nuevo_fd = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
-    if (nuevo_fd < 0)
-        continue;
-
-    int idx_libre = -1;
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clientes[i].fd == -1)
+        if (FD_ISSET(server_fd, &readfds))
         {
-            idx_libre = i;
-            break;
+            int nuevo_fd = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
+            if (nuevo_fd < 0)
+                continue;
+
+            int idx_libre = -1;
+            for (int i = 0; i < MAX_CLIENTS; i++)
+            {
+                if (clientes[i].fd == -1)
+                {
+                    idx_libre = i;
+                    break;
+                }
+            }
+
+            if (idx_libre == -1)
+            {
+                char *msg = "Servidor lleno\n";
+                send(nuevo_fd, msg, strlen(msg), 0);
+                CERRAR_SOCKET(nuevo_fd);
+                continue;
+            }
+
+            char nombre[NAME_SIZE] = {0};
+            int bytes = recv(nuevo_fd, nombre, NAME_SIZE - 1, 0);
+            if (bytes <= 0)
+            {
+                CERRAR_SOCKET(nuevo_fd);
+                continue;
+            }
+
+            // Eliminar CR/LF final si lo hay
+            nombre[bytes] = '\0';
+            nombre[strcspn(nombre, "\r\n")] = '\0';
+
+            if (nombre_duplicado(nombre))
+            {
+                char *msg = "Nombre inválido o duplicado\n";
+                send(nuevo_fd, msg, strlen(msg), 0);
+                CERRAR_SOCKET(nuevo_fd);
+                continue;
+            }
+
+            strncpy(clientes[idx_libre].nombre, nombre, NAME_SIZE - 1);
+            clientes[idx_libre].fd = nuevo_fd;
+
+            printf("Conectado: %s\n", clientes[idx_libre].nombre);
+            enviar_lista_usuarios();
         }
-    }
-
-    if (idx_libre == -1)
-    {
-        char *msg = "Servidor lleno\n";
-        send(nuevo_fd, msg, strlen(msg), 0);
-        CERRAR_SOCKET(nuevo_fd);
-        continue;
-    }
-
-    char nombre[NAME_SIZE] = {0};
-    int bytes = recv(nuevo_fd, nombre, NAME_SIZE - 1, 0);
-    if (bytes <= 0)
-    {
-        CERRAR_SOCKET(nuevo_fd);
-        continue;
-    }
-
-    // Eliminar CR/LF final si lo hay
-    nombre[bytes] = '\0';
-    nombre[strcspn(nombre, "\r\n")] = '\0';
-
-    if (nombre_duplicado(nombre))
-    {
-        char *msg = "Nombre inválido o duplicado\n";
-        send(nuevo_fd, msg, strlen(msg), 0);
-        CERRAR_SOCKET(nuevo_fd);
-        continue;
-    }
-
-    strncpy(clientes[idx_libre].nombre, nombre, NAME_SIZE - 1);
-    clientes[idx_libre].fd = nuevo_fd;
-
-    printf("Conectado: %s\n", clientes[idx_libre].nombre);
-    enviar_lista_usuarios();
-}
-
 
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
@@ -271,26 +275,87 @@ int main(int argc, char *argv[])
                 }
 
                 // Protocolo privado: PRIV|destino|texto
-                if (strncmp(buffer, "PRIV|", 5) == 0) {
+                if (strncmp(buffer, "PRIV|", 5) == 0)
+                {
                     buffer[bytes] = '\0';
-                    char *p   = buffer + 5;
+                    char *p = buffer + 5;
                     char *dst = strtok(p, "|");
                     char *msg = strtok(NULL, "\n");
                     // enviar_privado toma el índice del emisor, el nombre del destino y el texto
                     enviar_privado(i, dst, msg);
                     continue;
                 }
+                // Protocolo: FILE|destino|filename|size\n + datos
+                if (strncmp(buffer, "FILE|", 5) == 0)
+                {
+                    // 1) Asegura el fin de cabecera
+                    if (bytes < 6)
+                        continue; // muy corto
+                    // Busca el '\n' que termina la cabecera
+                    char *nl = memchr(buffer, '\n', bytes);
+                    if (!nl)
+                    {
+                        fprintf(stderr, "Cabecera de FILE incompleta\n");
+                        continue;
+                    }
+                    int header_len = nl - buffer + 1;
 
+                    // 2) Extrae y parsea la cabecera
+                    char hdr[BUFFER_SIZE];
+                    memcpy(hdr, buffer, header_len);
+                    hdr[header_len - 1] = '\0'; // quitar '\n'
+                    char *p = hdr + 5;
+                    char *dest = strtok(p, "|");
+                    char *fname = strtok(NULL, "|");
+                    long fsize = atol(strtok(NULL, "\0"));
 
-                // Protocolo: FILE|destino|filename|size
-                if (strncmp(buffer, "FILE|", 5) == 0) {
-                    buffer[bytes] = '\0';
-                    char *p = buffer + 5;
-                    char *dest   = strtok(p, "|");
-                    char *fname  = strtok(NULL, "|");
-                    char *sz     = strtok(NULL, "|");
-                    long fsize   = atol(sz);
-                    enviar_archivo(i, dest, fname, fsize);
+                    // 3) Busca el socket destino
+                    int fd_dest = -1;
+                    for (int j = 0; j < MAX_CLIENTS; j++)
+                    {
+                        if (clientes[j].fd != -1 &&
+                            strcmp(clientes[j].nombre, dest) == 0)
+                        {
+                            fd_dest = clientes[j].fd;
+                            break;
+                        }
+                    }
+                    if (fd_dest < 0)
+                    {
+                        char *err = "ERROR|Usuario receptor no encontrado\n";
+                        send(clientes[i].fd, err, strlen(err), 0);
+                        continue;
+                    }
+
+                    // 4) Envía la cabecera ya formateada
+                    char out_hdr[BUFFER_SIZE];
+                    snprintf(out_hdr, sizeof(out_hdr),
+                             "FILE|%s|%s|%ld\n",
+                             clientes[i].nombre, fname, fsize);
+                    send(fd_dest, out_hdr, strlen(out_hdr), 0);
+
+                    // 5) Envía los datos “sobrantes” tras la cabecera
+                    int leftover = bytes - header_len;
+                    if (leftover > 0)
+                    {
+                        send(fd_dest, nl + 1, leftover, 0);
+                    }
+                    long remaining = fsize - leftover;
+
+                    // 6) Lee y reenvía el resto de los datos
+                    char chunk[FILE_CHUNK_SIZE];
+                    while (remaining > 0)
+                    {
+                        int to_read = remaining > FILE_CHUNK_SIZE
+                                          ? FILE_CHUNK_SIZE
+                                          : remaining;
+                        int r = recv(clientes[i].fd, chunk, to_read, 0);
+                        if (r <= 0)
+                            break;
+                        send(fd_dest, chunk, r, 0);
+                        remaining -= r;
+                    }
+
                     continue;
                 }
 

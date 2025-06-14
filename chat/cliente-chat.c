@@ -12,12 +12,11 @@
 #define BUFFER_SIZE 1024
 #define FILE_CHUNK_SIZE 1024
 
-//./cliente-chat <IP> <Puerto> <NombreUsuario>
-    // Protocolo: FILE|destino|filename|size
-    //ej:
-    //PRIV|Mati|¡Hola Mati, probando ahora sí!
+// CONEXION:
+//          ./cliente-chat <IP> <Puerto> <NombreUsuario>
 
-
+// EJEMPLO DE ENVIO DE ARCHIVO     /file Mati prueba3.jpg
+// EJEMPLO DE ENVIO DE MENSAJE  PRIAVDO   PRIV|Mati|¡Hola Mati, probando ahora sí!
 
 void enviar_archivo_client(int sock, const char *dest, const char *filepath);
 
@@ -37,7 +36,7 @@ int main(int argc, char *argv[])
     fd_set read_fds;
     char buffer[BUFFER_SIZE];
 
-    // Crear socket
+    // Crea socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("Error al crear el socket");
@@ -71,7 +70,7 @@ int main(int argc, char *argv[])
     // Enviar salto de línea para delimitar
     send(sock, "\n", 1, 0);
 
-    printf("Conectado como '%s'.\nEscriba sus mensajes o '/file <destino> <ruta_del_archivo>' para enviar archivos:\n", username);
+    printf("Conectado como '%s'.\nEscriba sus mensajes o '/file <destino> <ruta>' para enviar archivos:\n", username);
 
     while (1)
     {
@@ -88,58 +87,98 @@ int main(int argc, char *argv[])
         // Datos del servidor
         if (FD_ISSET(sock, &read_fds))
         {
-            int bytes = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+            int bytes = recv(sock, buffer, BUFFER_SIZE, 0);
             if (bytes <= 0)
             {
-                printf("Servidor desconectado.\n");
-                break;
-            }
-            buffer[bytes] = '\0';
-            
-
-            if (strncmp(buffer, "FILE|", 5) == 0)
-            {
-                // Procesar recepción de archivo
-                char *p = buffer + 5;
-                char *remit = strtok(p, "|");
-                char *filename = strtok(NULL, "|");
-                char *sz = strtok(NULL, "|");
-                long filesize = atol(sz);
-
-                // Preparar nombre de archivo local
-                char *base = strrchr(filename, '/');
-                char localfile[256];
-                if (base)
-                    snprintf(localfile, sizeof(localfile), "recv_%s", base + 1);
+                if (bytes == 0)
+                {
+                    printf("Servidor desconectado.\n");
+                }
                 else
-                    snprintf(localfile, sizeof(localfile), "recv_%s", filename);
+                {
+                    perror("recv");
+                }
+                close(sock); // o CERRAR_SOCKET(sock) si usas tu macro
+                exit(EXIT_FAILURE);
+            }
 
+            int offset = 0;
+            while (offset < bytes)
+            {
+                // 1) ¿Hay un FILE| en lo que queda del buffer?
+                char *fp = strstr(buffer + offset, "FILE|");
+                if (!fp)
+                {
+                    // No hay FILE| → imprimir todo como mensaje normal
+                    fwrite(buffer + offset, 1, bytes - offset, stdout);
+                    break;
+                }
+
+                // 2) Hay FILE|, imprimir antes como mensaje normal
+                int before = fp - (buffer + offset);
+                if (before > 0)
+                {
+                    fwrite(buffer + offset, 1, before, stdout);
+                }
+
+                // 3) A partir de aquí empieza la cabecera de fichero
+                char *nl = memchr(fp, '\n', bytes - offset - before);
+                if (!nl)
+                {
+                    fprintf(stderr, "Cabecera de FILE incompleta\n");
+                    break;
+                }
+                int header_len = nl - fp + 1;
+
+                // Copiamos la línea de cabecera
+                char hdr[BUFFER_SIZE];
+                memcpy(hdr, fp, header_len);
+                hdr[header_len - 1] = '\0'; // quitar '\n'
+
+                // Parseamos: FILE|remitente|nombre|size
+                char *p = hdr + 5;
+                char *remit = strtok(p, "|");
+                char *fname = strtok(NULL, "|");
+                long filesize = atol(strtok(NULL, "\0"));
+
+                // Abrimos fichero local
+                char localfile[256];
+                snprintf(localfile, sizeof(localfile), "recv_%s", fname);
                 FILE *f = fopen(localfile, "wb");
                 if (!f)
                 {
-                    perror("Error al crear el archivo de recepción");
-                    continue;
+                    perror("fopen");
+                    break;
                 }
 
-                long total_written = 0;
-                while (total_written < filesize)
+                // 4) Escribimos cualquier dato que ya llegó tras la cabecera
+                int data_here = bytes - offset - before - header_len;
+                if (data_here > 0)
                 {
-                    int to_read = (filesize - total_written > BUFFER_SIZE) ? BUFFER_SIZE : (filesize - total_written);
-                    int r = recv(sock, buffer, to_read, 0);
+                    fwrite(nl + 1, 1, data_here, f);
+                }
+                long received = data_here;
+                offset += before + header_len + data_here;
+
+                // 5) Leer el resto del archivo
+                while (received < filesize)
+                {
+                    int want = (filesize - received > BUFFER_SIZE)
+                                   ? BUFFER_SIZE
+                                   : filesize - received;
+                    int r = recv(sock, buffer, want, 0);
                     if (r <= 0)
                     {
-                        perror("Error al recibir datos de archivo");
+                        perror("recv archivo");
                         break;
                     }
                     fwrite(buffer, 1, r, f);
-                    total_written += r;
+                    received += r;
                 }
                 fclose(f);
-                printf("Archivo recibido de %s: %s (%ld bytes)\n", remit, localfile, total_written);
-            }
-            else
-            {
-                printf("%s", buffer);
+                printf("Archivo '%s' recibido de %s (%ld bytes)\n",
+                       fname, remit, received);
+                // Y seguimos un ciclo por si hay más datos en buffer
             }
         }
 
