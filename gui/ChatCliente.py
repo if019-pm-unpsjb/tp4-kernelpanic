@@ -1,8 +1,8 @@
 import tkinter as tk
 import threading
 import tkinter.filedialog as fd
+from tkinter import messagebox
 import os
-import socket
 
 
 class ChatCliente:
@@ -86,32 +86,26 @@ class ChatCliente:
     def recibir_mensajes(self):
         while self.running:
             try:
-                data = self.socket.recv(1024)
+                data = self.socket.recv(4096).decode()
                 if not data:
                     self.desconectar()
                     break
 
-                mensaje = data.decode()
-
-                if mensaje.startswith("USERS|"):
-                    self.actualizar_lista_usuarios(mensaje)
-                elif mensaje.startswith("FROM|"):
-                    remitente, msg = mensaje.split("|", 2)[1:]
+                if data.startswith("USERS|"):
+                    self.actualizar_lista_usuarios(data)
+                elif data.startswith("FROM|"):
+                    remitente, msg = data.split("|", 2)[1:]
                     self.agregar_a_historial(remitente, f"{remitente}: {msg}")
                     if remitente == self.usuario_actual:
                         self.mostrar_historial(remitente)
                     else:
                         self.no_leidos.add(remitente)
                         self.marcar_usuario_no_leido(remitente)
-                elif mensaje.startswith("FILE|"):
-                    remitente, archivo = mensaje.split("|", 2)[1:]
-                    self.mostrar_mensaje("Sistema", f"{remitente} quiere enviarte el archivo {archivo}.")
-                    threading.Thread(
-                            target=self.tftp_get,
-                            args=(archivo,),
-                            daemon=True).start()
+                elif data.startswith("FILE|"):
+                    self.procesar_archivo_entrante(data)
                 else:
-                    self.mostrar_mensaje("Sistema", mensaje)
+                    self.mostrar_mensaje("Sistema", data)
+
             except Exception as e:
                 self.mostrar_mensaje("Sistema", f"Error: {e}")
                 self.running = False
@@ -173,107 +167,61 @@ class ChatCliente:
     def enviar_archivo(self):
         seleccion = self.lista_usuarios.curselection()
         if not seleccion:
-            self.mostrar_mensaje("Sistema", "Seleccioná un usuario para enviar el archivo.")
-            return
-
-        filepath = fd.askopenfilename()
-        if not filepath:
+            self.mostrar_mensaje("Sistema", "Seleccioná un usuario")
             return
 
         destinatario = self.lista_usuarios.get(seleccion[0])
-        nombre_archivo = filepath.split("/")[-1]
+        filepath = fd.askopenfilename(title="Seleccionar archivo")
 
-        comando = f"FILE|{destinatario}|{nombre_archivo}"
-        try:
-            self.socket.sendall(comando.encode())
-            self.mostrar_mensaje("Sistema", f"Enviando archivo {nombre_archivo}...")
-            threading.Thread(
-                    target=self.tftp_put,
-                    args=(filepath,),
-                    daemon=True).start()
-        except Exception as e:
-            self.mostrar_mensaje("Sistema", f"Error al enviar archivo: {e}")
-
-    def tftp_get(self, filename):
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(3)
-
-            ip_servidor, puerto_servidor = self.socket.getpeername()
-            mode = b"octet"
-            rrq = b"\x00\x01" + filename.encode() + b"\x00" + mode + b"\x00"
-            sock.sendto(rrq, (ip_servidor, puerto_servidor))
-
-            ruta_guardado = os.path.join(os.getcwd(), "recibido_" + filename)
-            with open(ruta_guardado, "wb") as f:
-                expected_block = 1
-                while True:
-                    try:
-                        data, addr = sock.recvfrom(516)
-                    except Exception:
-                        self.mostrar_mensaje("Sistema", "Timeout esperando DATA")
-                        return
-                    opcode = int.from_bytes(data[:2], 'big')
-                    block = int.from_bytes(data[2:4], 'big')
-                    if opcode != 3 or block != expected_block:
-                        continue
-                    f.write(data[4:])
-                    ack = b"\x00\x04" + block.to_bytes(2, 'big')
-                    sock.sendto(ack, addr)
-                    if len(data[4:]) < 512:
-                        break
-                    expected_block += 1
-
-            sock.close()
-            self.mostrar_mensaje("Sistema", f"Archivo '{filename}' recibido correctamente.")
-        except Exception as e:
-            self.mostrar_mensaje("Sistema", f"Error en TFTP GET: {e}")
-
-    def tftp_put(self, filepath):
-        filename = os.path.basename(filepath)
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(3)
-
-            ip_servidor, puerto_servidor = self.socket.getpeername()
-            mode = b"octet"
-            wrq = b"\x00\x02" + filename.encode() + b"\x00" + mode + b"\x00"
-            sock.sendto(wrq, (ip_servidor, puerto_servidor))
-
+        if filepath:
             try:
-                ack, server_addr = sock.recvfrom(516)
-            except Exception:
-                self.mostrar_mensaje("Sistema", "Timeout esperando primer ACK")
+                filename = os.path.basename(filepath)
+                filesize = os.path.getsize(filepath)
+
+                # Enviar cabecera
+                self.socket.sendall(f"FILE|{destinatario}|{filename}|{filesize}\n".encode())
+
+                # Enviar archivo
+                with open(filepath, 'rb') as f:
+                    self.socket.sendfile(f)
+
+                self.mostrar_mensaje("Sistema", f"Archivo enviado: {filename}")
+                self.agregar_a_historial(destinatario, f"Yo: [Archivo: {filename}]")
+
+            except Exception as e:
+                self.mostrar_mensaje("Error", f"Error al enviar: {e}")
+
+    def procesar_archivo_entrante(self, header):
+        try:
+            # Parsear cabecera: FILE|remitente|filename|filesize
+            parts = header.split("|")
+            remitente = parts[1]
+            filename = parts[2]
+            filesize = int(parts[3])
+
+            # Confirmar recepción
+            if not messagebox.askyesno("Archivo entrante", f"¿Recibir archivo {filename} ({filesize} bytes) de {remitente}?"):
                 return
 
-            opcode, ack_block = int.from_bytes(ack[:2], 'big'), int.from_bytes(ack[2:4], 'big')
-            if opcode != 4 or ack_block != 0:
-                self.mostrar_mensaje("Sistema", f"ACK inesperado: {ack}")
-                return
+            # Recibir archivo
+            save_path = fd.asksaveasfilename(
+                title="Guardar archivo",
+                initialfile=filename,
+                defaultextension=os.path.splitext(filename)[1]
+            )
 
-            with open(filepath, "rb") as f:
-                block = 1
-                while True:
-                    data = f.read(512)
-                    packet = b"\x00\x03" + block.to_bytes(2, 'big') + data
-                    sock.sendto(packet, server_addr)
+            if save_path:
+                with open(save_path, 'wb') as f:
+                    remaining = filesize
+                    while remaining > 0:
+                        chunk = self.socket.recv(min(4096, remaining))
+                        if not chunk:
+                            raise ConnectionError("Conexión interrumpida")
+                        f.write(chunk)
+                        remaining -= len(chunk)
 
-                    try:
-                        ack, addr = sock.recvfrom(516)
-                    except Exception:
-                        self.mostrar_mensaje("Sistema", f"Timeout esperando ACK del bloque {block}")
-                        return
+                self.mostrar_mensaje("Sistema", f"Archivo {filename} guardado")
+                self.agregar_a_historial(remitente, f"{remitente}: [Archivo: {filename}]")
 
-                    opcode, ack_block = int.from_bytes(ack[:2], 'big'), int.from_bytes(ack[2:4], 'big')
-                    if opcode != 4 or ack_block != block:
-                        self.mostrar_mensaje("Sistema", f"ACK inesperado en bloque {block}: {ack}")
-                        return
-
-                    block += 1
-                    if len(data) < 512:
-                        break
-
-            sock.close()
-            self.mostrar_mensaje("Sistema", f"Archivo {filename} enviado.")
         except Exception as e:
-            self.mostrar_mensaje("Sistema", f"Error en TFTP PUT: {e}")
+            self.mostrar_mensaje("Error", f"Error con archivo: {e}")
