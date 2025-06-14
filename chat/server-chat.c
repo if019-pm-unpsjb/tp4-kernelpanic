@@ -18,9 +18,9 @@ typedef int socklen_t;
 #endif
 
 #define MAX_CLIENTS 10
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 4096
 #define NAME_SIZE 32
-#define FILE_CHUNK_SIZE 1024
+#define FILE_CHUNK_SIZE 4096
 
 typedef struct
 {
@@ -69,24 +69,18 @@ void enviar_lista_usuarios()
     }
 }
 
-void enviar_privado(int idx_emisor, const char *dest, const char *texto)
+void enviar_privado(const char *remitente, const char *destino, const char *mensaje)
 {
-    // Buscar socket de destino
-    int fd_dest = -1;
-    for (int j = 0; j < MAX_CLIENTS; j++)
-        if (clientes[j].fd != -1 && strcmp(clientes[j].nombre, dest) == 0)
-            fd_dest = clientes[j].fd;
-    if (fd_dest < 0)
+    char mensaje_formateado[BUFFER_SIZE];
+    snprintf(mensaje_formateado, sizeof(mensaje_formateado), "FROM|%s|%s", remitente, mensaje);
+    for (int i = 0; i < MAX_CLIENTS; i++)
     {
-        char *err = "ERROR|Usuario no encontrado\n";
-        send(clientes[idx_emisor].fd, err, strlen(err), 0);
-        return;
+        if (clientes[i].fd != -1 && strcmp(clientes[i].nombre, destino) == 0)
+        {
+            send(clientes[i].fd, mensaje_formateado, strlen(mensaje_formateado), 0);
+            return;
+        }
     }
-    // Formatear y enviar
-    char out[BUFFER_SIZE];
-    snprintf(out, sizeof(out), "(Privado) %s: %s\n",
-             clientes[idx_emisor].nombre, texto);
-    send(fd_dest, out, strlen(out), 0);
 }
 
 void enviar_archivo(int idx_emisor, const char *destino, const char *filename, long filesize)
@@ -237,24 +231,15 @@ int main(int argc, char *argv[])
 
             char nombre[NAME_SIZE] = {0};
             int bytes = recv(nuevo_fd, nombre, NAME_SIZE - 1, 0);
-            if (bytes <= 0)
-            {
-                CERRAR_SOCKET(nuevo_fd);
-                continue;
-            }
-
-            // Eliminar CR/LF final si lo hay
-            nombre[bytes] = '\0';
-            nombre[strcspn(nombre, "\r\n")] = '\0';
-
-            if (nombre_duplicado(nombre))
+            if (bytes <= 0 || nombre_duplicado(nombre))
             {
                 char *msg = "Nombre inválido o duplicado\n";
                 send(nuevo_fd, msg, strlen(msg), 0);
                 CERRAR_SOCKET(nuevo_fd);
                 continue;
             }
-
+            
+            nombre[bytes] = '\0';
             strncpy(clientes[idx_libre].nombre, nombre, NAME_SIZE - 1);
             clientes[idx_libre].fd = nuevo_fd;
 
@@ -282,7 +267,7 @@ int main(int argc, char *argv[])
                     char *dst = strtok(p, "|");
                     char *msg = strtok(NULL, "\n");
                     // enviar_privado toma el índice del emisor, el nombre del destino y el texto
-                    enviar_privado(i, dst, msg);
+                    enviar_privado(clientes[i].nombre, dst, msg);
                     continue;
                 }
                 // Protocolo: FILE|destino|filename|size\n + datos
@@ -366,7 +351,7 @@ int main(int argc, char *argv[])
                     char *destino = strtok(NULL, "|");
                     char *mensaje = strtok(NULL, "");
                     if (destino && mensaje)
-                        enviar_privado(i, destino, mensaje);
+                        enviar_privado(clientes[i].nombre, destino, mensaje);
                 }
             }
         }
