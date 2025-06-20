@@ -6,17 +6,11 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <netdb.h>
 #include <netinet/in.h>
-#include <errno.h>
 
 #define BUFFER_SIZE 1024
 #define FILE_CHUNK_SIZE 1024
-
-// CONEXION:
-//          ./cliente-chat <IP> <Puerto> <NombreUsuario>
-
-// EJEMPLO DE ENVIO DE ARCHIVO     /file Mati prueba3.jpg
-// EJEMPLO DE ENVIO DE MENSAJE  PRIAVDO   PRIV|Mati|¡Hola Mati, probando ahora sí!
 
 void enviar_archivo_client(int sock, const char *dest, const char *filepath);
 
@@ -24,53 +18,68 @@ int main(int argc, char *argv[])
 {
     if (argc != 4)
     {
-        fprintf(stderr, "Uso: %s <IP> <Puerto> <NombreUsuario>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <IP_o_DNS> <Puerto> <NombreUsuario>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    const char *ip = argv[1];
+    const char *host = argv[1];
     int port = atoi(argv[2]);
     const char *username = argv[3];
     int sock;
-    struct sockaddr_in server_addr;
     fd_set read_fds;
     char buffer[BUFFER_SIZE];
 
-    // Crea socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("Error al crear el socket");
         exit(EXIT_FAILURE);
     }
 
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0)
+    // Resolver DNS
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    int err = getaddrinfo(host, port_str, &hints, &res);
+    if (err != 0)
     {
-        perror("Dirección IP inválida");
+        fprintf(stderr, "Error en getaddrinfo: %s\n", gai_strerror(err));
         close(sock);
         exit(EXIT_FAILURE);
     }
 
     // Conectar al servidor
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0)
     {
         perror("Conexión fallida");
+        freeaddrinfo(res);
         close(sock);
         exit(EXIT_FAILURE);
     }
+    freeaddrinfo(res);
 
-    // Enviar nombre de usuario para registro
+    // Enviar nombre de usuario
     if (send(sock, username, strlen(username), 0) < 0)
     {
         perror("Error al enviar nombre de usuario");
         close(sock);
         exit(EXIT_FAILURE);
     }
-    // Enviar salto de línea para delimitar
     send(sock, "\n", 1, 0);
 
-    printf("Conectado como '%s'.\nEscriba sus mensajes o '/file <destino> <ruta>' para enviar archivos:\n", username);
+    printf("Conectado como '%s'.\n"
+          "========================================================================================\n"
+          " - Para escribir un mensaje use este comando 'PRIV|<usuario destino>|<mensaje>'\n"
+          "\tPor ejemplo: PRIV|gabi|hola!\n"
+          " - Para enviar archivos use el comando '/file <usuario destino> <direccion del archivo>'\n"
+          "Precione Enter para actualizar los mensajes\n"
+          "Para salir del chat precione Ctrl + C\n"
+          "========================================================================================\n",
+          username);
 
     while (1)
     {
@@ -84,64 +93,54 @@ int main(int argc, char *argv[])
             break;
         }
 
-        // Datos del servidor
+        // Mensajes del servidor
         if (FD_ISSET(sock, &read_fds))
         {
             int bytes = recv(sock, buffer, BUFFER_SIZE, 0);
             if (bytes <= 0)
             {
                 if (bytes == 0)
-                {
                     printf("Servidor desconectado.\n");
-                }
                 else
-                {
                     perror("recv");
-                }
-                close(sock); // o CERRAR_SOCKET(sock) si usas tu macro
+
+                close(sock);
                 exit(EXIT_FAILURE);
             }
 
             int offset = 0;
             while (offset < bytes)
             {
-                // 1) ¿Hay un FILE| en lo que queda del buffer?
                 char *fp = strstr(buffer + offset, "FILE|");
                 if (!fp)
                 {
-                    // No hay FILE| → imprimir todo como mensaje normal
                     fwrite(buffer + offset, 1, bytes - offset, stdout);
                     break;
                 }
 
-                // 2) Hay FILE|, imprimir antes como mensaje normal
                 int before = fp - (buffer + offset);
                 if (before > 0)
                 {
                     fwrite(buffer + offset, 1, before, stdout);
                 }
 
-                // 3) A partir de aquí empieza la cabecera de fichero
                 char *nl = memchr(fp, '\n', bytes - offset - before);
                 if (!nl)
                 {
                     fprintf(stderr, "Cabecera de FILE incompleta\n");
                     break;
                 }
-                int header_len = nl - fp + 1;
 
-                // Copiamos la línea de cabecera
+                int header_len = nl - fp + 1;
                 char hdr[BUFFER_SIZE];
                 memcpy(hdr, fp, header_len);
-                hdr[header_len - 1] = '\0'; // quitar '\n'
+                hdr[header_len - 1] = '\0';
 
-                // Parseamos: FILE|remitente|nombre|size
                 char *p = hdr + 5;
                 char *remit = strtok(p, "|");
                 char *fname = strtok(NULL, "|");
                 long filesize = atol(strtok(NULL, "\0"));
 
-                // Abrimos fichero local
                 char localfile[256];
                 snprintf(localfile, sizeof(localfile), "recv_%s", fname);
                 FILE *f = fopen(localfile, "wb");
@@ -151,7 +150,6 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                // 4) Escribimos cualquier dato que ya llegó tras la cabecera
                 int data_here = bytes - offset - before - header_len;
                 if (data_here > 0)
                 {
@@ -160,12 +158,9 @@ int main(int argc, char *argv[])
                 long received = data_here;
                 offset += before + header_len + data_here;
 
-                // 5) Leer el resto del archivo
                 while (received < filesize)
                 {
-                    int want = (filesize - received > BUFFER_SIZE)
-                                   ? BUFFER_SIZE
-                                   : filesize - received;
+                    int want = (filesize - received > BUFFER_SIZE) ? BUFFER_SIZE : filesize - received;
                     int r = recv(sock, buffer, want, 0);
                     if (r <= 0)
                     {
@@ -176,9 +171,7 @@ int main(int argc, char *argv[])
                     received += r;
                 }
                 fclose(f);
-                printf("Archivo '%s' recibido de %s (%ld bytes)\n",
-                       fname, remit, received);
-                // Y seguimos un ciclo por si hay más datos en buffer
+                printf("Archivo '%s' recibido de %s (%ld bytes)\n", fname, remit, received);
             }
         }
 
@@ -187,7 +180,6 @@ int main(int argc, char *argv[])
         {
             if (fgets(buffer, BUFFER_SIZE, stdin) != NULL)
             {
-                // Comando de envío de archivo
                 if (strncmp(buffer, "/file ", 6) == 0)
                 {
                     char *p = buffer + 6;
@@ -215,7 +207,7 @@ int main(int argc, char *argv[])
     }
 
     close(sock);
-    return 0;
+    exit(EXIT_SUCCESS);
 }
 
 void enviar_archivo_client(int sock, const char *dest, const char *filepath)
